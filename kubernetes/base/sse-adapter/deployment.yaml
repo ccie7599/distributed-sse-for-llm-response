@@ -34,6 +34,10 @@ data:
   # Logging
   LOG_LEVEL: "info"
   LOG_FORMAT: "json"
+
+  # LLM Proxy URL for forwarding chat requests (Pattern 1)
+  # Override this in edge overlays to point to origin
+  LLM_PROXY_URL: ""
 ---
 apiVersion: v1
 kind: Service

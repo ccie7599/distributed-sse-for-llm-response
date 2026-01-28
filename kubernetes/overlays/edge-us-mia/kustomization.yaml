@@ -30,6 +30,16 @@ patches:
         path: /stringData/NATS_CORE_HOST
         value: "172.238.180.70"
 
+  # Update LLM proxy URL to point to origin
+  - target:
+      kind: ConfigMap
+      name: sse-adapter-config
+      namespace: sse-system
+    patch: |-
+      - op: replace
+        path: /data/LLM_PROXY_URL
+        value: "http://172.238.181.87"
+
 configMapGenerator:
   - name: cluster-info
     literals:

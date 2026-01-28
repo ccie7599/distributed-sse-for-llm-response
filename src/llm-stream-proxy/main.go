@@ -20,7 +20,8 @@ import (
 
 // ChatRequest is the request format for the /chat endpoint
 type ChatRequest struct {
-	Message string `json:"message"`
+	Message        string `json:"message"`
+	ConversationID string `json:"conversation_id,omitempty"` // Optional - generated if not provided
 }
 
 // ChatResponse is the response format
@@ -127,8 +128,11 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate conversation ID
-	conversationID := uuid.New().String()
+	// Use provided conversation ID or generate a new one
+	conversationID := req.ConversationID
+	if conversationID == "" {
+		conversationID = uuid.New().String()
+	}
 
 	// Start streaming in background
 	go streamFromLLM(conversationID, req.Message)

@@ -46,14 +46,26 @@ A distributed architecture for delivering LLM streaming responses via Server-Sen
 └───────────────────────────────┘  └───────────────────────────────┘  └───────────────────────────────┘
 ```
 
+## Quick Test
+
+Send a chat request to any edge and receive streaming tokens:
+
+```bash
+curl -N -X POST "http://<edge-sse-adapter>/chat" -H "Content-Type: application/json" -d '{"message": "What is the capital of France?"}'
+```
+
+The response streams back as Server-Sent Events with each token from the LLM.
+
 ## Data Flow
 
-1. **User Request**: Client sends `POST /chat` with message to LLM Stream Proxy
-2. **LLM Inference**: Proxy calls vLLM (Mistral-7B on GPU) with streaming enabled
-3. **Token Publishing**: Each token is published to Redis channel `chat.<conversation_id>.tokens`
-4. **NATS Bridge**: Redis-NATS Bridge subscribes to Redis and publishes to NATS subject `chat.<id>.tokens`
-5. **Fan-out**: NATS Core fans out to all connected leaf nodes with active subscriptions
-6. **SSE Delivery**: SSE Adapter subscribes to NATS, streams tokens to connected clients
+1. **User Request**: Client sends `POST /chat` to the nearest **edge** SSE Adapter
+2. **Edge Subscribe**: Edge SSE Adapter generates conversation ID, subscribes to NATS leaf
+3. **Forward to Origin**: Edge forwards the request to Origin LLM Stream Proxy
+4. **LLM Inference**: Origin calls vLLM (Mistral-7B on GPU) with streaming enabled
+5. **Token Publishing**: Each token is published to Redis channel `chat.<conversation_id>.tokens`
+6. **NATS Bridge**: Redis-NATS Bridge publishes to NATS subject `chat.<id>.tokens`
+7. **Fan-out**: NATS Core fans out to the edge leaf node that subscribed
+8. **SSE Delivery**: Edge SSE Adapter streams tokens back to client on the same HTTP response
 
 ## Key Benefits
 
@@ -175,23 +187,31 @@ kubectl apply -k kubernetes/overlays/edge-lax/sse-adapter
 ### 5. Test the System
 
 ```bash
-# Get LLM Stream Proxy IP
-LLM_PROXY=$(kubectl --kubeconfig=kubeconfig-origin.yaml get svc -n llm-system llm-stream-proxy -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-
 # Get SSE Adapter IPs
 SSE_ORIGIN=$(kubectl --kubeconfig=kubeconfig-origin.yaml get svc -n sse-system sse-adapter -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 SSE_LAX=$(kubectl --kubeconfig=kubeconfig-edge-lax.yaml get svc -n sse-system sse-adapter -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 SSE_MIA=$(kubectl --kubeconfig=kubeconfig-edge-mia.yaml get svc -n sse-system sse-adapter -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 
-# Start an SSE listener (in another terminal)
-curl -N http://$SSE_LAX/stream/<conversation-id>
+# Send a chat request to any edge - tokens stream back as SSE
+curl -N -X POST "http://$SSE_LAX/chat" -H "Content-Type: application/json" -d '{"message": "Hello, how are you?"}'
+```
 
-# Send a chat request
-curl -X POST http://$LLM_PROXY/chat \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Hello, how are you?"}'
+The response streams back as SSE events:
+```
+event: connected
+data: {"conversation_id":"b92d330b-b010-46dc-a5fe-a409ddc1b0e6"}
 
-# The response includes a conversation_id - use that in the SSE stream URL
+event: token
+id: 1
+data: {"conversation_id":"...","token":"Hello","sequence":1,"done":false,"timestamp":...}
+
+event: token
+id: 2
+data: {"conversation_id":"...","token":"!","sequence":2,"done":false,"timestamp":...}
+
+event: token
+id: 3
+data: {"conversation_id":"...","token":"[DONE]","sequence":3,"done":true,"timestamp":...}
 ```
 
 ## Project Structure

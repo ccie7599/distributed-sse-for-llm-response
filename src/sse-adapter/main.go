@@ -23,6 +23,7 @@ type Config struct {
 	InspectionBuffer   time.Duration
 	InspectionEndpoint string
 	LogLevel           string
+	LLMProxyURL        string // Origin LLM proxy URL for forwarding chat requests
 }
 
 func loadConfig() *Config {
@@ -34,6 +35,7 @@ func loadConfig() *Config {
 		InspectionBuffer:   getDurationEnv("INSPECTION_BUFFER_MS", 150*time.Millisecond),
 		InspectionEndpoint: getEnv("INSPECTION_ENDPOINT", ""),
 		LogLevel:           getEnv("LOG_LEVEL", "info"),
+		LLMProxyURL:        getEnv("LLM_PROXY_URL", ""), // e.g., http://172.238.181.87
 	}
 }
 
@@ -76,6 +78,7 @@ func main() {
 		"nats_url", cfg.NATSUrl,
 		"sse_port", cfg.SSEPort,
 		"inspection_mode", cfg.InspectionMode,
+		"llm_proxy_url", cfg.LLMProxyURL,
 	)
 
 	// Connect to NATS
@@ -92,8 +95,12 @@ func main() {
 	// Setup HTTP routes
 	mux := http.NewServeMux()
 
-	// SSE streaming endpoint
+	// SSE streaming endpoint (legacy - for direct NATS subscriptions)
 	mux.HandleFunc("/stream/", sseHandler.HandleStream)
+
+	// Chat endpoint - accepts POST, returns SSE stream (Pattern 1)
+	// This is the preferred endpoint for clients
+	mux.HandleFunc("/chat", sseHandler.HandleChat)
 
 	// Health checks
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
