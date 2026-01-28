@@ -1,0 +1,62 @@
+# Terraform
+*.tfstate
+*.tfstate.*
+*.tfvars
+!terraform.tfvars.example
+.terraform/
+.terraform.lock.hcl
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Kubernetes
+kubeconfig*.yaml
+kubeconfig*.yml
+*-kubeconfig.yaml
+*-kubeconfig.yml
+kubeconfigs/
+
+# Secrets and credentials
+*.pem
+*.key
+*.crt
+secrets.yaml
+secrets.yml
+*-secrets.yaml
+*-secrets.yml
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/
+
+# Logs
+*.log
+logs/
+
+# Build artifacts
+bin/
+dist/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
