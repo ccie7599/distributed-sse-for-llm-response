@@ -1,0 +1,283 @@
+# NATS Core Cluster Configuration
+# Deploys a 3-node NATS cluster with JetStream enabled
+# This is the central hub that leaf nodes connect to
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nats-system
+  labels:
+    app.kubernetes.io/name: nats
+    app.kubernetes.io/component: core
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nats-config
+  namespace: nats-system
+data:
+  nats.conf: |
+    # Server identification
+    server_name: $POD_NAME
+    
+    # Client connections
+    port: 4222
+    
+    # HTTP monitoring
+    http_port: 8222
+    
+    # Cluster configuration (internal communication between NATS nodes)
+    cluster {
+      name: nats-core
+      port: 6222
+      
+      routes: [
+        nats-route://nats-0.nats-headless.nats-system.svc.cluster.local:6222
+        nats-route://nats-1.nats-headless.nats-system.svc.cluster.local:6222
+        nats-route://nats-2.nats-headless.nats-system.svc.cluster.local:6222
+      ]
+    }
+    
+    # Leaf node configuration (for edge nodes to connect)
+    leafnodes {
+      port: 7422
+      
+      authorization {
+        users: [
+          { user: leaf, password: $LEAF_PASSWORD }
+        ]
+      }
+    }
+    
+    # JetStream configuration (for message persistence and replay)
+    jetstream {
+      store_dir: /data/jetstream
+      max_memory_store: 1Gi
+      max_file_store: 10Gi
+    }
+    
+    # Logging
+    debug: false
+    trace: false
+    logtime: true
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: nats-credentials
+  namespace: nats-system
+type: Opaque
+stringData:
+  # IMPORTANT: Change this password in production!
+  # This must match the LEAF_PASSWORD in the leaf node configuration
+  LEAF_PASSWORD: "CHANGE_ME_IN_PRODUCTION"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nats
+  namespace: nats-system
+  labels:
+    app.kubernetes.io/name: nats
+spec:
+  selector:
+    app.kubernetes.io/name: nats
+  ports:
+    - name: client
+      port: 4222
+      targetPort: 4222
+    - name: cluster
+      port: 6222
+      targetPort: 6222
+    - name: leafnode
+      port: 7422
+      targetPort: 7422
+    - name: monitor
+      port: 8222
+      targetPort: 8222
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nats-headless
+  namespace: nats-system
+  labels:
+    app.kubernetes.io/name: nats
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: nats
+  ports:
+    - name: client
+      port: 4222
+    - name: cluster
+      port: 6222
+    - name: leafnode
+      port: 7422
+    - name: monitor
+      port: 8222
+---
+# External LoadBalancer for leaf node connections from edge clusters
+apiVersion: v1
+kind: Service
+metadata:
+  name: nats-external
+  namespace: nats-system
+  labels:
+    app.kubernetes.io/name: nats
+    app.kubernetes.io/component: leafnode-ingress
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: nats
+  ports:
+    - name: leafnode
+      port: 7422
+      targetPort: 7422
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: nats
+  namespace: nats-system
+  labels:
+    app.kubernetes.io/name: nats
+spec:
+  serviceName: nats-headless
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nats
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nats
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: nats
+          image: nats:2.10-alpine
+          ports:
+            - containerPort: 4222
+              name: client
+            - containerPort: 6222
+              name: cluster
+            - containerPort: 7422
+              name: leafnode
+            - containerPort: 8222
+              name: monitor
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: LEAF_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: nats-credentials
+                  key: LEAF_PASSWORD
+          command:
+            - nats-server
+            - --config
+            - /etc/nats/nats.conf
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nats
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "2Gi"
+              cpu: "2"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8222
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz?js-enabled-only=true
+              port: 8222
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: config
+          configMap:
+            name: nats-config
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 20Gi
+---
+# JetStream Stream configuration for chat tokens
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nats-streams-config
+  namespace: nats-system
+data:
+  setup-streams.sh: |
+    #!/bin/sh
+    # Wait for NATS to be ready
+    sleep 10
+    
+    # Create the main chat tokens stream
+    nats stream add CHAT_TOKENS \
+      --subjects "chat.*.tokens" \
+      --retention limits \
+      --max-age 5m \
+      --max-bytes 1073741824 \
+      --replicas 3 \
+      --discard old \
+      --dupe-window 30s \
+      --storage file \
+      --no-deny-delete \
+      --no-deny-purge \
+      || echo "Stream may already exist"
+    
+    # Create control stream for kill signals
+    nats stream add CHAT_CONTROL \
+      --subjects "chat.*.control" \
+      --retention limits \
+      --max-age 1m \
+      --max-bytes 104857600 \
+      --replicas 3 \
+      --discard old \
+      --storage memory \
+      || echo "Stream may already exist"
+    
+    echo "Streams configured successfully"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nats-stream-setup
+  namespace: nats-system
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: setup
+          image: natsio/nats-box:latest
+          command: ["/bin/sh", "/scripts/setup-streams.sh"]
+          env:
+            - name: NATS_URL
+              value: "nats://nats.nats-system.svc.cluster.local:4222"
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+      volumes:
+        - name: scripts
+          configMap:
+            name: nats-streams-config
+            defaultMode: 0755

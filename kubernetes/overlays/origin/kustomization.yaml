@@ -1,0 +1,44 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: origin-overlay
+
+resources:
+  # NATS Core Cluster (not leaf nodes)
+  - ../../base/nats-core
+
+  # Redis (for LLM pub/sub)
+  - ../../base/llm
+
+  # Redis-NATS Bridge (only at origin)
+  - ../../base/redis-nats-bridge
+
+  # SSE Adapter (origin also serves as an edge)
+  - ../../base/sse-adapter
+
+  # Monitoring
+  - ../../base/monitoring/prometheus
+  - ../../base/monitoring/grafana
+
+commonLabels:
+  environment: origin
+  region: us-ord
+
+patches:
+  # Origin connects to NATS core, not leaf
+  - target:
+      kind: ConfigMap
+      name: sse-adapter-config
+      namespace: sse-system
+    patch: |-
+      - op: replace
+        path: /data/NATS_URL
+        value: "nats://nats.nats-system.svc.cluster.local:4222"
+
+configMapGenerator:
+  - name: cluster-info
+    literals:
+      - CLUSTER_ROLE=origin
+      - REGION=us-ord
+      - NATS_CORE_ENDPOINT=nats.nats-system.svc.cluster.local:7422

@@ -1,0 +1,18 @@
+spin_manifest_version = 2
+
+[application]
+name = "nats-subscriber"
+version = "0.1.0"
+authors = ["Your Name"]
+description = "Example Spin function for NATS message inspection"
+
+[[trigger.http]]
+route = "/inspect"
+component = "nats-subscriber"
+
+[component.nats-subscriber]
+source = "target/wasm32-wasi/release/nats_subscriber.wasm"
+# No outbound hosts needed for pure inspection
+
+[component.nats-subscriber.build]
+command = "cargo build --target wasm32-wasi --release"

@@ -1,0 +1,145 @@
+# SSE Adapter Service
+# Converts NATS messages to Server-Sent Events for HTTP clients
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sse-system
+  labels:
+    app.kubernetes.io/name: sse-adapter
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sse-adapter-config
+  namespace: sse-system
+data:
+  # NATS connection
+  NATS_URL: "nats://nats-leaf.nats-system.svc.cluster.local:4222"
+  
+  # SSE configuration
+  SSE_PORT: "8080"
+  SSE_READ_TIMEOUT: "0"  # No timeout for SSE
+  SSE_WRITE_TIMEOUT: "0"
+  SSE_IDLE_TIMEOUT: "120s"
+  
+  # Security inspection mode: disabled, inline, async, hybrid
+  INSPECTION_MODE: "disabled"
+  INSPECTION_BUFFER_MS: "150"
+  INSPECTION_ENDPOINT: "http://inspector:8080/inspect"
+  
+  # Metrics
+  METRICS_PORT: "9090"
+  
+  # Logging
+  LOG_LEVEL: "info"
+  LOG_FORMAT: "json"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sse-adapter
+  namespace: sse-system
+  labels:
+    app.kubernetes.io/name: sse-adapter
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: sse-adapter
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+    - name: metrics
+      port: 9090
+      targetPort: 9090
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sse-adapter
+  namespace: sse-system
+  labels:
+    app.kubernetes.io/name: sse-adapter
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sse-adapter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sse-adapter
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: sse-adapter
+          image: brianapley/sse-adapter:latest
+          ports:
+            - containerPort: 8080
+              name: http
+            - containerPort: 9090
+              name: metrics
+          envFrom:
+            - configMapRef:
+                name: sse-adapter-config
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: sse-adapter-hpa
+  namespace: sse-system
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: sse-adapter
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Pods
+      pods:
+        metric:
+          name: sse_active_connections
+        target:
+          type: AverageValue
+          averageValue: "1000"
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: sse-adapter-pdb
+  namespace: sse-system
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sse-adapter

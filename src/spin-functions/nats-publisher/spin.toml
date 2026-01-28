@@ -1,0 +1,21 @@
+spin_manifest_version = 2
+
+[application]
+name = "nats-publisher"
+version = "0.1.0"
+authors = ["Your Name"]
+description = "Example Spin function for NATS publishing"
+
+[[trigger.http]]
+route = "/publish/..."
+component = "nats-publisher"
+
+[component.nats-publisher]
+source = "target/wasm32-wasi/release/nats_publisher.wasm"
+allowed_outbound_hosts = [
+    "http://nats-http-bridge:8080",
+    "http://localhost:8080"
+]
+
+[component.nats-publisher.build]
+command = "cargo build --target wasm32-wasi --release"

@@ -1,0 +1,17 @@
+[package]
+name = "nats-publisher"
+version = "0.1.0"
+edition = "2021"
+authors = ["Your Name"]
+description = "Spin WASM function for NATS publishing example"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+spin-sdk = "2.0"
+anyhow = "1"
+
+[profile.release]
+opt-level = "s"
+lto = true

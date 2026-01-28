@@ -1,0 +1,11 @@
+# Linode API token - get from https://cloud.linode.com/profile/tokens
+linode_token = "your-linode-api-token-here"
+
+# Kubernetes version
+k8s_version = "1.29"
+
+# Environment name
+environment = "demo"
+
+# NATS leaf node password (optional - will be auto-generated if empty)
+# nats_leaf_password = "your-secure-password"

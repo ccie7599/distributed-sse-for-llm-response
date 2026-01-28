@@ -1,0 +1,37 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: edge-us-mia-overlay
+
+resources:
+  # NATS Leaf Nodes (not core cluster)
+  - ../../base/nats-leaf
+
+  # SSE Adapter
+  - ../../base/sse-adapter
+
+  # Monitoring
+  - ../../base/monitoring/prometheus
+  - ../../base/monitoring/grafana
+
+commonLabels:
+  environment: edge
+  region: us-mia
+
+patches:
+  # Update NATS core endpoint to reach origin cluster
+  - target:
+      kind: Secret
+      name: nats-leaf-credentials
+      namespace: nats-system
+    patch: |-
+      - op: replace
+        path: /stringData/NATS_CORE_HOST
+        value: "172.238.180.70"
+
+configMapGenerator:
+  - name: cluster-info
+    literals:
+      - CLUSTER_ROLE=edge
+      - REGION=us-mia

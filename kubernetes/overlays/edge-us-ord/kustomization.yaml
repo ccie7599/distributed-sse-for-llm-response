@@ -1,0 +1,51 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: edge-us-ord-overlay
+
+namespace: default
+
+resources:
+  # NATS Leaf Nodes (not core cluster)
+  - ../../base/nats/leaf-node.yaml
+  
+  # SSE Adapter
+  - ../../base/sse-adapter
+  
+  # Monitoring
+  - ../../base/monitoring/prometheus
+  - ../../base/monitoring/grafana
+
+commonLabels:
+  environment: edge
+  region: us-ord
+
+# Patches specific to this edge
+patches:
+  # Update NATS core endpoint to reach origin cluster
+  # This needs to be updated with the actual external IP/hostname
+  - target:
+      kind: Secret
+      name: nats-leaf-credentials
+      namespace: nats-system
+    patch: |-
+      - op: replace
+        path: /stringData/NATS_CORE_HOST
+        value: "${NATS_CORE_EXTERNAL_IP}"
+
+  # SSE Adapter connects to local leaf node
+  - target:
+      kind: ConfigMap
+      name: sse-adapter-config
+      namespace: sse-system
+    patch: |-
+      - op: replace
+        path: /data/NATS_URL
+        value: "nats://nats-leaf.nats-system.svc.cluster.local:4222"
+
+configMapGenerator:
+  - name: cluster-info
+    literals:
+      - CLUSTER_ROLE=edge
+      - REGION=us-ord

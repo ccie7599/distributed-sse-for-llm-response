@@ -1,0 +1,156 @@
+# LLM Inference Service
+# Deploys vLLM with Mistral-7B model on GPU nodes (RTX 4000 Ada - 20GB VRAM)
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: llm-system
+  labels:
+    app.kubernetes.io/name: llm
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vllm-config
+  namespace: llm-system
+data:
+  # Model configuration - using Mistral-7B-Instruct (fits in 20GB VRAM)
+  MODEL_NAME: "mistralai/Mistral-7B-Instruct-v0.3"
+
+  # vLLM server settings optimized for RTX 4000 Ada (20GB VRAM)
+  TENSOR_PARALLEL_SIZE: "1"
+  GPU_MEMORY_UTILIZATION: "0.85"
+  MAX_MODEL_LEN: "4096"
+
+  # API settings
+  API_PORT: "8000"
+
+  # Redis publishing (for token streaming)
+  REDIS_HOST: "redis.redis-system.svc.cluster.local"
+  REDIS_PORT: "6379"
+  REDIS_CHANNEL_PREFIX: "chat."
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: llm-inference
+  namespace: llm-system
+  labels:
+    app.kubernetes.io/name: vllm
+spec:
+  selector:
+    app.kubernetes.io/name: vllm
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm
+  namespace: llm-system
+  labels:
+    app.kubernetes.io/name: vllm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vllm
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: vllm
+    spec:
+      # Schedule on GPU nodes only
+      nodeSelector:
+        nvidia.com/gpu: "true"
+      tolerations:
+        - key: "nvidia.com/gpu"
+          operator: "Exists"
+          effect: "NoSchedule"
+      containers:
+        - name: vllm
+          image: vllm/vllm-openai:v0.6.6.post1
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: HUGGING_FACE_HUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hf-credentials
+                  key: token
+                  optional: true
+          args:
+            - "--model"
+            - "mistralai/Mistral-7B-Instruct-v0.3"
+            - "--tensor-parallel-size"
+            - "1"
+            - "--gpu-memory-utilization"
+            - "0.85"
+            - "--max-model-len"
+            - "4096"
+            - "--port"
+            - "8000"
+            - "--host"
+            - "0.0.0.0"
+          resources:
+            requests:
+              memory: "24Gi"
+              cpu: "4"
+              nvidia.com/gpu: "1"
+            limits:
+              memory: "30Gi"
+              cpu: "8"
+              nvidia.com/gpu: "1"
+          volumeMounts:
+            - name: model-cache
+              mountPath: /root/.cache/huggingface
+            - name: shm
+              mountPath: /dev/shm
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 300  # Model loading takes time
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 360
+            periodSeconds: 30
+            timeoutSeconds: 10
+      volumes:
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: model-cache-pvc
+        # Shared memory for PyTorch
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: model-cache-pvc
+  namespace: llm-system
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+---
+# Optional: HuggingFace credentials for gated models
+apiVersion: v1
+kind: Secret
+metadata:
+  name: hf-credentials
+  namespace: llm-system
+type: Opaque
+stringData:
+  token: ""  # Add your HF token if needed

@@ -1,0 +1,28 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: load-test
+  namespace: default
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: load-generator
+          image: brianapley/sse-load-generator:latest
+          args:
+            - "-mode=both"
+            - "-redis=redis.redis-system.svc.cluster.local:6379"
+            - "-sse=http://sse-adapter.sse-system.svc.cluster.local"
+            - "-conversations=5"
+            - "-duration=30s"
+            - "-tokens=50"
+            - "-token-delay=50"
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"

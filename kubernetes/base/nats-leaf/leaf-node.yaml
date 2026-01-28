@@ -1,0 +1,188 @@
+# NATS Leaf Node Configuration
+# Deploys NATS leaf nodes that connect to the core cluster
+# These are deployed at each edge location
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nats-system
+  labels:
+    app.kubernetes.io/name: nats
+    app.kubernetes.io/component: leaf
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nats-leaf-config
+  namespace: nats-system
+data:
+  nats.conf: |
+    # Server identification
+    server_name: $POD_NAME
+    
+    # Client connections (local services connect here)
+    port: 4222
+    
+    # HTTP monitoring
+    http_port: 8222
+    
+    # Leaf node connection to core cluster
+    leafnodes {
+      remotes: [
+        {
+          # URL format: nats-leaf://user:password@host:port
+          url: "nats-leaf://$LEAF_USER:$LEAF_PASSWORD@$NATS_CORE_HOST:7422"
+        }
+      ]
+    }
+    
+    # No JetStream on leaf nodes - they proxy to core
+    # jetstream: disabled by default
+    
+    # Logging
+    debug: false
+    trace: false
+    logtime: true
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: nats-leaf-credentials
+  namespace: nats-system
+type: Opaque
+stringData:
+  # These must match the credentials configured in the core cluster
+  # IMPORTANT: Override these values in your overlay or create the secret manually
+  LEAF_USER: "leaf"
+  LEAF_PASSWORD: "CHANGE_ME_IN_PRODUCTION"
+  NATS_CORE_HOST: "nats.nats-system.svc.cluster.local"  # Will be overridden per edge
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nats-leaf
+  namespace: nats-system
+  labels:
+    app.kubernetes.io/name: nats-leaf
+spec:
+  selector:
+    app.kubernetes.io/name: nats-leaf
+  ports:
+    - name: client
+      port: 4222
+      targetPort: 4222
+    - name: monitor
+      port: 8222
+      targetPort: 8222
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nats-leaf
+  namespace: nats-system
+  labels:
+    app.kubernetes.io/name: nats-leaf
+spec:
+  # Multiple leaf nodes for HA - they don't cluster with each other
+  # Each independently connects to the core
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nats-leaf
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nats-leaf
+    spec:
+      terminationGracePeriodSeconds: 30
+      initContainers:
+        - name: config-init
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              # Substitute environment variables in the config template
+              sed -e "s/\$POD_NAME/$POD_NAME/g" \
+                  -e "s/\$LEAF_USER/$LEAF_USER/g" \
+                  -e "s/\$LEAF_PASSWORD/$LEAF_PASSWORD/g" \
+                  -e "s/\$NATS_CORE_HOST/$NATS_CORE_HOST/g" \
+                  /etc/nats-template/nats.conf > /etc/nats/nats.conf
+              cat /etc/nats/nats.conf
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: LEAF_USER
+              valueFrom:
+                secretKeyRef:
+                  name: nats-leaf-credentials
+                  key: LEAF_USER
+            - name: LEAF_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: nats-leaf-credentials
+                  key: LEAF_PASSWORD
+            - name: NATS_CORE_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: nats-leaf-credentials
+                  key: NATS_CORE_HOST
+          volumeMounts:
+            - name: config-template
+              mountPath: /etc/nats-template
+            - name: config
+              mountPath: /etc/nats
+      containers:
+        - name: nats
+          image: nats:2.10-alpine
+          ports:
+            - containerPort: 4222
+              name: client
+            - containerPort: 8222
+              name: monitor
+          command:
+            - nats-server
+            - --config
+            - /etc/nats/nats.conf
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nats
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "1"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8222
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8222
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: config-template
+          configMap:
+            name: nats-leaf-config
+        - name: config
+          emptyDir: {}
+---
+# PodDisruptionBudget to ensure at least one leaf node is always available
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: nats-leaf-pdb
+  namespace: nats-system
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nats-leaf
