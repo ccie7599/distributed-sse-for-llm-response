@@ -270,6 +270,59 @@ Useful queries:
 - Core NATS provides the fan-out semantics needed for real-time streaming
 - JetStream is still used for persistence and replay if needed
 
+## Security Inspection Patterns
+
+LLM outputs may need inspection before delivery (PII detection, prompt injection, toxic content). The challenge: inspection traditionally requires buffering, which defeats streaming. This architecture supports three patterns with different trade-offs.
+
+> **Current Status**: Inspection is disabled by default. See `src/sse-adapter/sse_handler.go` for implementation hooks.
+
+### Pattern Comparison
+
+| Pattern | Latency | Security | When to Use |
+|---------|---------|----------|-------------|
+| **Disabled** | 0ms | None | Development, trusted content |
+| **Inline** | +10-50ms/token | Highest | Regulated environments (healthcare, finance) |
+| **Async** | ~0ms | Lowest | Audit/logging, post-hoc remediation acceptable |
+| **Hybrid** | +100-200ms initial | Moderate | Balance of security and performance |
+
+### Inline (Blocking)
+
+```
+NATS → SSE Adapter → Inspector → User
+                         ↓
+                   Drop/Redact if flagged
+```
+
+Every token is inspected before delivery. Inspector failure blocks streaming.
+
+### Async Tap (Non-blocking)
+
+```
+NATS ─┬─→ SSE Adapter → User (immediate)
+      │
+      └─→ Inspector (parallel) → Alert if flagged
+```
+
+Tokens delivered immediately. Inspector runs in parallel and can trigger alerts or kill the connection via control channel.
+
+### Hybrid (Buffered)
+
+```
+NATS → Buffer (100-200ms) → Inspector → SSE Adapter → User
+```
+
+Small initial delay allows inspection to keep pace. Backpressure if inspector falls behind.
+
+### Configuration
+
+Set via environment variables in the SSE Adapter:
+
+```yaml
+INSPECTION_MODE: "disabled"  # Options: disabled, inline, async, hybrid
+INSPECTION_BUFFER_MS: "150"  # For hybrid mode
+INSPECTION_ENDPOINT: "http://inspector:8080/inspect"  # For inline mode
+```
+
 ## Regions
 
 | Region | Linode DC | Purpose |
