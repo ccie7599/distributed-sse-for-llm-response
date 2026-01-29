@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Distributed SSE Chat Demo</title>
+  <style>
+    :root {
+      --bg-primary: #0d1117;
+      --bg-secondary: #161b22;
+      --bg-tertiary: #21262d;
+      --border-color: #30363d;
+      --text-primary: #e6edf3;
+      --text-secondary: #8b949e;
+      --accent: #58a6ff;
+      --accent-hover: #79c0ff;
+      --success: #3fb950;
+      --warning: #d29922;
+      --error: #f85149;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .header {
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border-color);
+      padding: 16px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .header h1 {
+      font-size: 20px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .header h1::before {
+      content: '';
+      width: 8px;
+      height: 8px;
+      background: var(--success);
+      border-radius: 50%;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .config-toggle {
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      color: var(--text-primary);
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      transition: background 0.2s;
+    }
+
+    .config-toggle:hover {
+      background: var(--border-color);
+    }
+
+    .config-panel {
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border-color);
+      padding: 16px 24px;
+      display: none;
+    }
+
+    .config-panel.open {
+      display: block;
+    }
+
+    .config-panel label {
+      display: block;
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-bottom: 4px;
+    }
+
+    .config-panel input {
+      width: 100%;
+      max-width: 500px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      color: var(--text-primary);
+      padding: 10px 12px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+    }
+
+    .config-panel input:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    .main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      max-width: 900px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    .messages {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      padding-bottom: 24px;
+    }
+
+    .message {
+      display: flex;
+      gap: 12px;
+      animation: fadeIn 0.3s ease;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .message.user {
+      flex-direction: row-reverse;
+    }
+
+    .avatar {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+
+    .message.user .avatar {
+      background: var(--accent);
+      color: var(--bg-primary);
+    }
+
+    .message.assistant .avatar {
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+    }
+
+    .message-content {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 12px 16px;
+      max-width: 80%;
+      line-height: 1.5;
+    }
+
+    .message.user .message-content {
+      background: var(--accent);
+      color: var(--bg-primary);
+      border-color: var(--accent);
+    }
+
+    .message-content .cursor {
+      display: inline-block;
+      width: 2px;
+      height: 1em;
+      background: var(--accent);
+      animation: blink 1s infinite;
+      vertical-align: text-bottom;
+      margin-left: 2px;
+    }
+
+    @keyframes blink {
+      0%, 50% { opacity: 1; }
+      51%, 100% { opacity: 0; }
+    }
+
+    .metrics {
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid var(--border-color);
+      font-size: 11px;
+      color: var(--text-secondary);
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .message.user .metrics {
+      border-color: rgba(255,255,255,0.2);
+      color: rgba(255,255,255,0.7);
+    }
+
+    .metric {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .metric-value {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      color: var(--success);
+    }
+
+    .message.user .metric-value {
+      color: rgba(255,255,255,0.9);
+    }
+
+    .input-area {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 12px;
+      display: flex;
+      gap: 12px;
+    }
+
+    .input-area textarea {
+      flex: 1;
+      background: transparent;
+      border: none;
+      color: var(--text-primary);
+      font-size: 15px;
+      resize: none;
+      font-family: inherit;
+      line-height: 1.5;
+    }
+
+    .input-area textarea:focus {
+      outline: none;
+    }
+
+    .input-area textarea::placeholder {
+      color: var(--text-secondary);
+    }
+
+    .send-btn {
+      background: var(--accent);
+      border: none;
+      color: var(--bg-primary);
+      width: 40px;
+      height: 40px;
+      border-radius: 8px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.2s;
+      align-self: flex-end;
+    }
+
+    .send-btn:hover:not(:disabled) {
+      background: var(--accent-hover);
+    }
+
+    .send-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .send-btn svg {
+      width: 20px;
+      height: 20px;
+    }
+
+    .stats-bar {
+      background: var(--bg-secondary);
+      border-top: 1px solid var(--border-color);
+      padding: 12px 24px;
+      display: flex;
+      justify-content: center;
+      gap: 32px;
+      font-size: 13px;
+    }
+
+    .stat {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .stat-label {
+      color: var(--text-secondary);
+    }
+
+    .stat-value {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      color: var(--text-primary);
+    }
+
+    .stat-value.good { color: var(--success); }
+    .stat-value.warn { color: var(--warning); }
+    .stat-value.bad { color: var(--error); }
+
+    .empty-state {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-secondary);
+      gap: 16px;
+    }
+
+    .empty-state svg {
+      width: 64px;
+      height: 64px;
+      opacity: 0.5;
+    }
+
+    .error-toast {
+      position: fixed;
+      bottom: 100px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--error);
+      color: white;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-size: 14px;
+      display: none;
+      animation: slideUp 0.3s ease;
+    }
+
+    .error-toast.show {
+      display: block;
+    }
+
+    @keyframes slideUp {
+      from { transform: translateX(-50%) translateY(20px); opacity: 0; }
+      to { transform: translateX(-50%) translateY(0); opacity: 1; }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Distributed SSE Chat</h1>
+    <button class="config-toggle" onclick="toggleConfig()">Configure Endpoint</button>
+  </div>
+
+  <div class="config-panel" id="configPanel">
+    <label for="endpoint">SSE Endpoint URL</label>
+    <input type="text" id="endpoint" placeholder="https://your-edge.example.com" value="">
+    <p style="margin-top: 8px; font-size: 12px; color: var(--text-secondary);">
+      Enter the URL of your edge SSE adapter (e.g., https://edge-lax.example.com)
+    </p>
+  </div>
+
+  <div class="main">
+    <div class="messages" id="messages">
+      <div class="empty-state">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <p>Start a conversation</p>
+      </div>
+    </div>
+
+    <div class="input-area">
+      <textarea id="input" rows="1" placeholder="Type a message..." onkeydown="handleKeydown(event)"></textarea>
+      <button class="send-btn" id="sendBtn" onclick="sendMessage()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <div class="stats-bar">
+    <div class="stat">
+      <span class="stat-label">First Token:</span>
+      <span class="stat-value" id="statTTFT">--</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Avg Token Latency:</span>
+      <span class="stat-value" id="statAvgLatency">--</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Tokens:</span>
+      <span class="stat-value" id="statTokens">--</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Total Time:</span>
+      <span class="stat-value" id="statTotal">--</span>
+    </div>
+  </div>
+
+  <div class="error-toast" id="errorToast"></div>
+
+  <script>
+    let isStreaming = false;
+    let currentMetrics = null;
+
+    function toggleConfig() {
+      document.getElementById('configPanel').classList.toggle('open');
+    }
+
+    function getEndpoint() {
+      const endpoint = document.getElementById('endpoint').value.trim();
+      if (!endpoint) {
+        showError('Please configure the endpoint URL first');
+        document.getElementById('configPanel').classList.add('open');
+        return null;
+      }
+      return endpoint.replace(/\/$/, '');
+    }
+
+    function showError(msg) {
+      const toast = document.getElementById('errorToast');
+      toast.textContent = msg;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 4000);
+    }
+
+    function handleKeydown(e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    }
+
+    function autoResize(textarea) {
+      textarea.style.height = 'auto';
+      textarea.style.height = Math.min(textarea.scrollHeight, 150) + 'px';
+    }
+
+    document.getElementById('input').addEventListener('input', function() {
+      autoResize(this);
+    });
+
+    function addMessage(role, content, metrics = null) {
+      const messages = document.getElementById('messages');
+      const emptyState = messages.querySelector('.empty-state');
+      if (emptyState) emptyState.remove();
+
+      const msg = document.createElement('div');
+      msg.className = `message ${role}`;
+
+      const avatar = document.createElement('div');
+      avatar.className = 'avatar';
+      avatar.textContent = role === 'user' ? 'U' : 'AI';
+
+      const contentDiv = document.createElement('div');
+      contentDiv.className = 'message-content';
+      contentDiv.innerHTML = content;
+
+      if (metrics) {
+        const metricsDiv = document.createElement('div');
+        metricsDiv.className = 'metrics';
+        metricsDiv.innerHTML = `
+          <div class="metric">TTFT: <span class="metric-value">${metrics.ttft}ms</span></div>
+          <div class="metric">Avg: <span class="metric-value">${metrics.avgLatency}ms</span></div>
+          <div class="metric">Tokens: <span class="metric-value">${metrics.tokens}</span></div>
+          <div class="metric">Total: <span class="metric-value">${metrics.total}ms</span></div>
+        `;
+        contentDiv.appendChild(metricsDiv);
+      }
+
+      msg.appendChild(avatar);
+      msg.appendChild(contentDiv);
+      messages.appendChild(msg);
+      messages.scrollTop = messages.scrollHeight;
+
+      return contentDiv;
+    }
+
+    function updateStats(metrics) {
+      const ttft = document.getElementById('statTTFT');
+      const avg = document.getElementById('statAvgLatency');
+      const tokens = document.getElementById('statTokens');
+      const total = document.getElementById('statTotal');
+
+      ttft.textContent = metrics.ttft + 'ms';
+      ttft.className = 'stat-value ' + (metrics.ttft < 500 ? 'good' : metrics.ttft < 1000 ? 'warn' : 'bad');
+
+      avg.textContent = metrics.avgLatency + 'ms';
+      avg.className = 'stat-value ' + (metrics.avgLatency < 50 ? 'good' : metrics.avgLatency < 100 ? 'warn' : 'bad');
+
+      tokens.textContent = metrics.tokens;
+      tokens.className = 'stat-value';
+
+      total.textContent = metrics.total + 'ms';
+      total.className = 'stat-value';
+    }
+
+    async function sendMessage() {
+      if (isStreaming) return;
+
+      const endpoint = getEndpoint();
+      if (!endpoint) return;
+
+      const input = document.getElementById('input');
+      const message = input.value.trim();
+      if (!message) return;
+
+      input.value = '';
+      autoResize(input);
+
+      // Add user message
+      addMessage('user', message);
+
+      // Add assistant message placeholder
+      const assistantContent = addMessage('assistant', '<span class="cursor"></span>');
+
+      isStreaming = true;
+      document.getElementById('sendBtn').disabled = true;
+
+      // Metrics tracking
+      const requestStart = performance.now();
+      let firstTokenTime = null;
+      let tokenLatencies = [];
+      let tokenCount = 0;
+      let responseText = '';
+
+      try {
+        const response = await fetch(`${endpoint}/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message })
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const data = line.slice(6);
+              try {
+                const parsed = JSON.parse(data);
+
+                if (parsed.token && parsed.token !== '[DONE]') {
+                  const now = performance.now();
+
+                  // First token
+                  if (firstTokenTime === null) {
+                    firstTokenTime = now;
+                  }
+
+                  // Calculate latency from server timestamp
+                  // Server timestamp is in nanoseconds
+                  if (parsed.timestamp) {
+                    const serverTimeMs = parsed.timestamp / 1000000;
+                    const clientTimeMs = Date.now();
+                    const latency = clientTimeMs - serverTimeMs;
+                    // Only use if reasonable (clock sync issues can cause negative values)
+                    if (latency > 0 && latency < 10000) {
+                      tokenLatencies.push(latency);
+                    }
+                  }
+
+                  tokenCount++;
+                  responseText += parsed.token;
+                  assistantContent.innerHTML = responseText + '<span class="cursor"></span>';
+
+                  // Update live stats
+                  const ttft = Math.round(firstTokenTime - requestStart);
+                  const avgLatency = tokenLatencies.length > 0
+                    ? Math.round(tokenLatencies.reduce((a, b) => a + b, 0) / tokenLatencies.length)
+                    : '--';
+                  const total = Math.round(now - requestStart);
+
+                  updateStats({
+                    ttft,
+                    avgLatency: avgLatency,
+                    tokens: tokenCount,
+                    total
+                  });
+                }
+              } catch (e) {
+                // Skip non-JSON lines
+              }
+            }
+          }
+        }
+
+        // Final metrics
+        const endTime = performance.now();
+        const finalMetrics = {
+          ttft: Math.round(firstTokenTime - requestStart),
+          avgLatency: tokenLatencies.length > 0
+            ? Math.round(tokenLatencies.reduce((a, b) => a + b, 0) / tokenLatencies.length)
+            : 'N/A',
+          tokens: tokenCount,
+          total: Math.round(endTime - requestStart)
+        };
+
+        // Remove cursor and add metrics
+        assistantContent.innerHTML = responseText;
+        const metricsDiv = document.createElement('div');
+        metricsDiv.className = 'metrics';
+        metricsDiv.innerHTML = `
+          <div class="metric">TTFT: <span class="metric-value">${finalMetrics.ttft}ms</span></div>
+          <div class="metric">Avg Latency: <span class="metric-value">${finalMetrics.avgLatency}ms</span></div>
+          <div class="metric">Tokens: <span class="metric-value">${finalMetrics.tokens}</span></div>
+          <div class="metric">Total: <span class="metric-value">${finalMetrics.total}ms</span></div>
+        `;
+        assistantContent.appendChild(metricsDiv);
+
+      } catch (error) {
+        console.error('Stream error:', error);
+        assistantContent.innerHTML = `<span style="color: var(--error);">Error: ${error.message}</span>`;
+        showError('Failed to connect: ' + error.message);
+      } finally {
+        isStreaming = false;
+        document.getElementById('sendBtn').disabled = false;
+      }
+    }
+
+    // Try to load saved endpoint
+    const savedEndpoint = localStorage.getItem('sseEndpoint');
+    if (savedEndpoint) {
+      document.getElementById('endpoint').value = savedEndpoint;
+    }
+
+    // Save endpoint on change
+    document.getElementById('endpoint').addEventListener('change', function() {
+      localStorage.setItem('sseEndpoint', this.value);
+    });
+  </script>
+</body>
+</html>
