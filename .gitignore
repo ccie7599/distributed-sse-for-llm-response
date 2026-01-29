@@ -20,7 +20,9 @@ kubeconfig*.yaml
 kubeconfig*.yml
 *-kubeconfig.yaml
 *-kubeconfig.yml
-kubeconfigs/
+kubeconfigs/*.yaml
+kubeconfigs/*.yml
+!kubeconfigs/.gitkeep
 
 # Secrets and credentials
 *.pem
