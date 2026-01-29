@@ -214,6 +214,23 @@ id: 3
 data: {"conversation_id":"...","token":"[DONE]","sequence":3,"done":true,"timestamp":...}
 ```
 
+### 6. Demo Chat UI
+
+A dark-mode chat interface is included for testing with real-time latency metrics:
+
+```bash
+cd demo/chat-ui
+python -m http.server 8000
+# Open http://localhost:8000
+```
+
+Features:
+- Configurable endpoint URL
+- Real-time streaming display
+- Latency metrics: TTFT, avg token latency, token count, total time
+
+See [demo/chat-ui/README.md](demo/chat-ui/README.md) for details.
+
 ## Project Structure
 
 ```
@@ -241,7 +258,8 @@ data: {"conversation_id":"...","token":"[DONE]","sequence":3,"done":true,"timest
 │   ├── redis-nats-bridge/        # Go service: Redis → NATS
 │   ├── llm-stream-proxy/         # Go service: Chat API → Redis
 │   └── spin-functions/           # WASM examples (optional)
-└── CLAUDE.md                     # Project context for Claude Code
+└── demo/
+    └── chat-ui/                  # Browser-based chat demo with latency metrics
 ```
 
 ## Building Images
